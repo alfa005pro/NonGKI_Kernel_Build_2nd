@@ -10,7 +10,7 @@ env:
   DEVICE_CODENAME : "cepheus"
 
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
-  EXTRA_CMDS : 'LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld HOSTCFLAGS="-DNO_YAML"'
+  EXTRA_CMDS: 'LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld HOSTCFLAGS="-DNO_YAML" HOSTLDFLAGS="-lrt"'
 
   KERNEL_SOURCE : "https://github.com/alfa005pro/kernel_xiaomi_cepheus.git"
   KERNEL_BRANCH : "thirteen"
@@ -117,9 +117,28 @@ jobs:
 
       - name: 🪛 Extra Kernel Options
         run: |
-          # Only ${{ env.DEVICE_NAME }} use it.
           cd $GITHUB_WORKSPACE/device_kernel
-          # Nothing
+          
+          # 1. 强行关闭 DTC 的 YAML 支持 (解决 undefined symbol: yaml_emitter_initialize 报错)
+          # 这一步是把 Makefile 里关于 libyaml 的链接指令全部删掉，让编译器跳过它
+          sed -i 's/$(shell pkg-config --libs libyaml 2>\/dev\/null)//g' scripts/dtc/Makefile
+          sed -i 's/HOSTLOADLIBES_dtc  = -lyaml/HOSTLOADLIBES_dtc  = /g' scripts/dtc/Makefile
+          sed -i 's/HOSTCFLAGS_yamltree.o := $(shell pkg-config --cflags libyaml 2>\/dev\/null)/HOSTCFLAGS_yamltree.o := -DNO_YAML/g' scripts/dtc/Makefile
+
+          # 2. 注入 Kprobes 和 KernelSU 必要的配置项
+          # 先清理 defconfig 中可能存在的冲突项
+          sed -i '/CONFIG_KPROBES/d' arch/arm64/configs/cepheus_defconfig
+          sed -i '/CONFIG_KALLSYMS/d' arch/arm64/configs/cepheus_defconfig
+          
+          # 写入新的配置到点菜单末尾
+          echo "CONFIG_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
+          echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
+          echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/cepheus_defconfig
+          echo "CONFIG_KALLSYMS=y" >> arch/arm64/configs/cepheus_defconfig
+          echo "CONFIG_KALLSYMS_ALL=y" >> arch/arm64/configs/cepheus_defconfig
+          echo "CONFIG_OVERLAY_FS=y" >> arch/arm64/configs/cepheus_defconfig
+          
+          echo "[+] Successfully modified defconfig and disabled DTC YAML support."
 
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
