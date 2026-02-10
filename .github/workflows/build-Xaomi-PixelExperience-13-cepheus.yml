@@ -119,18 +119,20 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
           
-          # 1. 强行关闭 DTC 的 YAML 支持 (解决 undefined symbol: yaml_emitter_initialize 报错)
-          # 这一步是把 Makefile 里关于 libyaml 的链接指令全部删掉，让编译器跳过它
-          sed -i 's/$(shell pkg-config --libs libyaml 2>\/dev\/null)//g' scripts/dtc/Makefile
-          sed -i 's/HOSTLOADLIBES_dtc  = -lyaml/HOSTLOADLIBES_dtc  = /g' scripts/dtc/Makefile
-          sed -i 's/HOSTCFLAGS_yamltree.o := $(shell pkg-config --cflags libyaml 2>\/dev\/null)/HOSTCFLAGS_yamltree.o := -DNO_YAML/g' scripts/dtc/Makefile
-
-          # 2. 注入 Kprobes 和 KernelSU 必要的配置项
-          # 先清理 defconfig 中可能存在的冲突项
+          # 【核心修复】彻底物理抹除 DTC 对 YAML 的依赖
+          # 既然编译器非要找 yaml，我们直接把 Makefile 里关于 yaml 的编译目标删掉
+          sed -i 's/dtc-objs += yamltree.o/# dtc-objs += yamltree.o/g' scripts/dtc/Makefile
+          sed -i 's/HOSTLDLIBS_dtc += $(shell pkg-config --libs libyaml 2>\/dev\/null)/# /g' scripts/dtc/Makefile
+          sed -i 's/HOSTLOADLIBES_dtc  = -lyaml/# /g' scripts/dtc/Makefile
+          
+          # 【Kprobes 增强配置】清理冲突并强制注入
+          # 先清理
           sed -i '/CONFIG_KPROBES/d' arch/arm64/configs/cepheus_defconfig
           sed -i '/CONFIG_KALLSYMS/d' arch/arm64/configs/cepheus_defconfig
+          sed -i '/CONFIG_HAVE_KPROBES/d' arch/arm64/configs/cepheus_defconfig
+          sed -i '/CONFIG_KPROBE_EVENTS/d' arch/arm64/configs/cepheus_defconfig
           
-          # 写入新的配置到点菜单末尾
+          # 注入
           echo "CONFIG_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/cepheus_defconfig
@@ -138,8 +140,8 @@ jobs:
           echo "CONFIG_KALLSYMS_ALL=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_OVERLAY_FS=y" >> arch/arm64/configs/cepheus_defconfig
           
-          echo "[+] Successfully modified defconfig and disabled DTC YAML support."
-
+          echo "[+] Successfully disabled YAML in DTC and injected Kprobes config."
+          
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
 
