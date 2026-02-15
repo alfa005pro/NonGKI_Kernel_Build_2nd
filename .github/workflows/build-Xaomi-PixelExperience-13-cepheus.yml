@@ -9,8 +9,8 @@ env:
   DEVICE_NAME : "Xiaomi 9"
   DEVICE_CODENAME : "cepheus"
 
-  CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
-  EXTRA_CMDS: 'CC=clang LD_IS_LLD=1'
+  CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+  EXTRA_CMDS: 'LD_IS_LLD=1 LLVM=1 LLVM_IAS=1'
 
   KERNEL_SOURCE : "https://github.com/alfa005pro/kernel_xiaomi_cepheus.git"
   KERNEL_BRANCH : "thirteen"
@@ -119,30 +119,23 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
           
-          # 1. 【核心：物理阉割 yamltree】
-          # 既然它链接不到 libyaml，我们就让 Makefile 彻底忘记 yamltree.o 的存在
-          # 这一行是所有 4.14 内核报错的根源
-          sed -i 's/dtc-objs += yamltree.o/# dtc-objs += yamltree.o/g' scripts/dtc/Makefile
-          
-          # 2. 【清理残留引用】
-          # 防止有些 Makefile 还在尝试寻找 libyaml 的库文件
-          sed -i 's/HOSTLOADLIBES_dtc  = -lyaml/# HOSTLOADLIBES_dtc  = -lyaml/g' scripts/dtc/Makefile
-          sed -i 's/HOSTLDLIBS_dtc += $(shell pkg-config --libs libyaml 2>\/dev\/null)//g' scripts/dtc/Makefile
-
-          # 3. 【解决 ThinLTO 参数问题】
-          # 上次报错里出现的 --thinlto-cache-dir，我们全局把它清理掉
+          # 1. 【双重保险】全局清理可能导致 ld.gold 报错的 ThinLTO 参数
+          # 即使 env 里传了 LD_IS_LLD，有些 Makefile 还是会乱跑，我们直接在源码里搜杀
           find . -name Makefile -exec sed -i 's/--thinlto-cache-dir=//g' {} +
 
-          # 4. 【Kprobes 注入】
-          # 这是为了保证 KernelSU 能正常挂载
+          # 2. 【Kprobes 注入】确保 KernelSU 能够正常挂载 (Non-GKI 核心步骤)
+          # 先删除可能存在的旧配置防止冲突
           sed -i '/CONFIG_KPROBES/d' arch/arm64/configs/cepheus_defconfig
+          sed -i '/CONFIG_KALLSYMS/d' arch/arm64/configs/cepheus_defconfig
+          
+          # 写入新配置
           echo "CONFIG_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KALLSYMS=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KALLSYMS_ALL=y" >> arch/arm64/configs/cepheus_defconfig
           
-          echo "[+] DTC YAML bypass and Kprobes set successfully."
+          echo "[+] Final adjustments done. Build starting..."
           
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
