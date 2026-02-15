@@ -9,8 +9,8 @@ env:
   DEVICE_NAME : "Xiaomi 9"
   DEVICE_CODENAME : "cepheus"
 
-  CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
-  EXTRA_CMDS: 'CC=clang HOSTCFLAGS="-DNO_YAML" HOSTLDFLAGS="-lyaml" LD_IS_LLD=1'
+  CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
+  EXTRA_CMDS: 'CC=clang LD_IS_LLD=1'
 
   KERNEL_SOURCE : "https://github.com/alfa005pro/kernel_xiaomi_cepheus.git"
   KERNEL_BRANCH : "thirteen"
@@ -117,31 +117,32 @@ jobs:
 
       - name: 🪛 Extra Kernel Options
         run: |
-          # 1. 安装必要的开发库
-          sudo apt-get update
-          sudo apt-get install -y libyaml-dev pkg-config
-          
           cd $GITHUB_WORKSPACE/device_kernel
+          
+          # 1. 【核心：物理阉割 yamltree】
+          # 既然它链接不到 libyaml，我们就让 Makefile 彻底忘记 yamltree.o 的存在
+          # 这一行是所有 4.14 内核报错的根源
+          sed -i 's/dtc-objs += yamltree.o/# dtc-objs += yamltree.o/g' scripts/dtc/Makefile
+          
+          # 2. 【清理残留引用】
+          # 防止有些 Makefile 还在尝试寻找 libyaml 的库文件
+          sed -i 's/HOSTLOADLIBES_dtc  = -lyaml/# HOSTLOADLIBES_dtc  = -lyaml/g' scripts/dtc/Makefile
+          sed -i 's/HOSTLDLIBS_dtc += $(shell pkg-config --libs libyaml 2>\/dev\/null)//g' scripts/dtc/Makefile
 
-          # 2. 【核心修复】手动修正 Makefile 里的链接逻辑
-          # 4.14 内核的 scripts/dtc/Makefile 经常硬编码了链接方式
-          # 我们直接把链接指令强制改为 pkg-config 获取的内容
-          sed -i 's/HOSTLOADLIBES_dtc  = -lyaml/HOSTLOADLIBES_dtc = $(shell pkg-config --libs libyaml)/g' scripts/dtc/Makefile
-          
-          # 3. 【解决 LTO 报错】
-          # 如果你的内核开启了 ThinLTO，但 ld.gold 报错，我们强制它关闭这个缓存选项
-          sed -i 's/--thinlto-cache-dir=//g' arch/arm64/kernel/vdso/Makefile || true
-          
-          # 4. 注入 Kprobes 配置 (KernelSU 必备)
+          # 3. 【解决 ThinLTO 参数问题】
+          # 上次报错里出现的 --thinlto-cache-dir，我们全局把它清理掉
+          find . -name Makefile -exec sed -i 's/--thinlto-cache-dir=//g' {} +
+
+          # 4. 【Kprobes 注入】
+          # 这是为了保证 KernelSU 能正常挂载
           sed -i '/CONFIG_KPROBES/d' arch/arm64/configs/cepheus_defconfig
-          sed -i '/CONFIG_KALLSYMS/d' arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KALLSYMS=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KALLSYMS_ALL=y" >> arch/arm64/configs/cepheus_defconfig
           
-          echo "[+] Build environment patched for YAML and LTO."
+          echo "[+] DTC YAML bypass and Kprobes set successfully."
           
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
