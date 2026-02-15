@@ -10,7 +10,7 @@ env:
   DEVICE_CODENAME : "cepheus"
 
   CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
-  EXTRA_CMDS: "CC=clang LD=ld.lld OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip NM=llvm-nm AS=llvm-as LD_IS_LLD=1"
+  EXTRA_CMDS: "CC=clang LD=ld.lld OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip NM=llvm-nm AS=llvm-as LD_IS_LLD=1 LD_ARM32=arm-linux-gnueabi-ld"
 
   KERNEL_SOURCE : "https://github.com/alfa005pro/kernel_xiaomi_cepheus.git"
   KERNEL_BRANCH : "thirteen"
@@ -119,17 +119,15 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
 
-          # 1. 【核心修复】强制关闭导致报错的 ThinLTO 缓存功能
-          # 我们不再是删除变量，而是直接通过环境变量压制它
-          sed -i 's/-Wl,--thinlto-cache-dir=//g' Makefile || true
-          sed -i 's/--thinlto-cache-dir=//g' arch/arm64/kernel/vdso/Makefile || true
-          
-          # 2. 【备选强制手段】如果 Makefile 依然试图开启 LTO，我们手动将其降级
-          # 这能防止 ld.lld 去寻找那个不存在的 .thinlto-cache 目录
-          sed -i 's/-flto=thin//g' Makefile || true
-          sed -i 's/-flto//g' Makefile || true
+          # 1. 【杀手锏】关闭 VDSO32 编译，解决 arm 机器码无法识别问题
+          # 这是解决 4.14 内核在云端编译 32 位兼容层报错最快的方法
+          sed -i 's/CONFIG_VDSO32=y/CONFIG_VDSO32=n/g' arch/arm64/configs/cepheus_defconfig || true
 
-          # 3. 注入 Kprobes 配置 (KernelSU 必备)
+          # 2. 清理之前残留的 ThinLTO 报错
+          find . -name Makefile -exec sed -i 's/--thinlto-cache-dir=//g' {} +
+          sed -i 's/-flto=thin//g' Makefile || true
+
+          # 3. Kprobes 注入
           sed -i '/CONFIG_KPROBES/d' arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
@@ -137,7 +135,7 @@ jobs:
           echo "CONFIG_KALLSYMS=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KALLSYMS_ALL=y" >> arch/arm64/configs/cepheus_defconfig
           
-          echo "[+] ThinLTO cache error bypassed."
+          echo "[+] VDSO32 disabled and environment ready."
           
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
