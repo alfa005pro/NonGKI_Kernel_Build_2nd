@@ -119,15 +119,17 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
 
-          # 1. 修复 VDSO 链接器报错 (解决 -EL: not found)
-          # 强制让 VDSO 使用 ld.lld 链接，而不是错误的交叉编译器
-          sed -i 's/-m  -EL/-m aarch64elf/g' arch/arm64/kernel/vdso/Makefile || true
-          sed -i 's/$(LD)/ld.lld/g' arch/arm64/kernel/vdso/Makefile || true
+          # 1. 【核心修复】强制关闭导致报错的 ThinLTO 缓存功能
+          # 我们不再是删除变量，而是直接通过环境变量压制它
+          sed -i 's/-Wl,--thinlto-cache-dir=//g' Makefile || true
+          sed -i 's/--thinlto-cache-dir=//g' arch/arm64/kernel/vdso/Makefile || true
           
-          # 2. 修复 ThinLTO 参数错误
-          find . -name Makefile -exec sed -i 's/--thinlto-cache-dir=//g' {} +
+          # 2. 【备选强制手段】如果 Makefile 依然试图开启 LTO，我们手动将其降级
+          # 这能防止 ld.lld 去寻找那个不存在的 .thinlto-cache 目录
+          sed -i 's/-flto=thin//g' Makefile || true
+          sed -i 's/-flto//g' Makefile || true
 
-          # 3. Kprobes 注入 (KernelSU 必备)
+          # 3. 注入 Kprobes 配置 (KernelSU 必备)
           sed -i '/CONFIG_KPROBES/d' arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
@@ -135,7 +137,7 @@ jobs:
           echo "CONFIG_KALLSYMS=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KALLSYMS_ALL=y" >> arch/arm64/configs/cepheus_defconfig
           
-          echo "[+] VDSO and ThinLTO patches applied."
+          echo "[+] ThinLTO cache error bypassed."
           
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
