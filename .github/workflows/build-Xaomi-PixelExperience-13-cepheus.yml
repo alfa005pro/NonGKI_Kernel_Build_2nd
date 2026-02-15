@@ -9,8 +9,8 @@ env:
   DEVICE_NAME : "Xiaomi 9"
   DEVICE_CODENAME : "cepheus"
 
-  CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
-  EXTRA_CMDS: 'LD_IS_LLD=1 LLVM=1 LLVM_IAS=1'
+  CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+  EXTRA_CMDS: "CC=clang LD=ld.lld OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip NM=llvm-nm AS=llvm-as"
 
   KERNEL_SOURCE : "https://github.com/alfa005pro/kernel_xiaomi_cepheus.git"
   KERNEL_BRANCH : "thirteen"
@@ -118,24 +118,24 @@ jobs:
       - name: 🪛 Extra Kernel Options
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
+
+          # 1. 修复 VDSO 链接器报错 (解决 -EL: not found)
+          # 强制让 VDSO 使用 ld.lld 链接，而不是错误的交叉编译器
+          sed -i 's/-m  -EL/-m aarch64elf/g' arch/arm64/kernel/vdso/Makefile || true
+          sed -i 's/$(LD)/ld.lld/g' arch/arm64/kernel/vdso/Makefile || true
           
-          # 1. 【双重保险】全局清理可能导致 ld.gold 报错的 ThinLTO 参数
-          # 即使 env 里传了 LD_IS_LLD，有些 Makefile 还是会乱跑，我们直接在源码里搜杀
+          # 2. 修复 ThinLTO 参数错误
           find . -name Makefile -exec sed -i 's/--thinlto-cache-dir=//g' {} +
 
-          # 2. 【Kprobes 注入】确保 KernelSU 能够正常挂载 (Non-GKI 核心步骤)
-          # 先删除可能存在的旧配置防止冲突
+          # 3. Kprobes 注入 (KernelSU 必备)
           sed -i '/CONFIG_KPROBES/d' arch/arm64/configs/cepheus_defconfig
-          sed -i '/CONFIG_KALLSYMS/d' arch/arm64/configs/cepheus_defconfig
-          
-          # 写入新配置
           echo "CONFIG_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KALLSYMS=y" >> arch/arm64/configs/cepheus_defconfig
           echo "CONFIG_KALLSYMS_ALL=y" >> arch/arm64/configs/cepheus_defconfig
           
-          echo "[+] Final adjustments done. Build starting..."
+          echo "[+] VDSO and ThinLTO patches applied."
           
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
