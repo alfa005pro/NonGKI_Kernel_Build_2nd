@@ -10,7 +10,7 @@ env:
   DEVICE_CODENAME : "cepheus"
 
   CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
-  EXTRA_CMDS: 'CC=clang HOSTCFLAGS="-DNO_YAML"'
+  EXTRA_CMDS: 'CC=clang HOSTLDFLAGS="-lyaml"'
 
   KERNEL_SOURCE : "https://github.com/alfa005pro/kernel_xiaomi_cepheus.git"
   KERNEL_BRANCH : "thirteen"
@@ -117,7 +117,26 @@ jobs:
 
       - name: 🪛 Extra Kernel Options
         run: |
+          # 1. 安装宿主机编译 DTC 所需的 YAML 开发库
+          sudo apt-get update
+          sudo apt-get install -y libyaml-dev pkg-config
+          
           cd $GITHUB_WORKSPACE/device_kernel
+          
+          # 2. 修复 Makefile 的链接逻辑 (针对 4.14 内核的常见适配)
+          # 告诉 Makefile 使用 pkg-config 来获取正确的库路径
+          sed -i 's/HOSTLOADLIBES_dtc  = -lyaml/HOSTLOADLIBES_dtc = $(shell pkg-config --libs libyaml)/g' scripts/dtc/Makefile
+          
+          # 3. 注入 Kprobes 配置 (继续保持 KernelSU 支持)
+          sed -i '/CONFIG_KPROBES/d' arch/arm64/configs/cepheus_defconfig
+          sed -i '/CONFIG_KALLSYMS/d' arch/arm64/configs/cepheus_defconfig
+          echo "CONFIG_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
+          echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/cepheus_defconfig
+          echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/cepheus_defconfig
+          echo "CONFIG_KALLSYMS=y" >> arch/arm64/configs/cepheus_defconfig
+          echo "CONFIG_KALLSYMS_ALL=y" >> arch/arm64/configs/cepheus_defconfig
+          
+          echo "[+] Libyaml installed and DTC Makefile linked properly."
           
           # 【核心修复】彻底物理抹除 DTC 对 YAML 的依赖
           # 既然编译器非要找 yaml，我们直接把 Makefile 里关于 yaml 的编译目标删掉
